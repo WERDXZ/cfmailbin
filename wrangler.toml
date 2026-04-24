@@ -1,0 +1,34 @@
+name = "cfmailbin"
+main = "src/worker.ts"
+compatibility_date = "2026-04-24"
+
+[build]
+command = "deno task ui:build"
+
+[assets]
+directory = "./dist/ui"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/health"]
+
+[observability]
+enabled = true
+
+[vars]
+CFMAILBIN_APP_NAME = "cfmailbin"
+CFMAILBIN_ALLOW_CATCH_ALL = "false"
+CFMAILBIN_DEFAULT_RETENTION_DAYS = "7"
+# CFMAILBIN_FORWARD_TO = "owner@example.com"
+
+[triggers]
+crons = ["0 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cfmailbin"
+database_id = "replace-with-d1-database-id"
+migrations_dir = "src/db/migrations"
+
+[[r2_buckets]]
+binding = "RAW_EMAILS"
+bucket_name = "cfmailbin-raw-emails"
+preview_bucket_name = "cfmailbin-raw-emails-preview"

@@ -70,7 +70,7 @@ function uniqueTagNames(tagNames: string[]): string[] {
   return [...next];
 }
 
-function mapAlias(row: AliasRow): Alias {
+function mapAlias(row: AliasRow, tags: string[]): Alias {
   return {
     address: row.address,
     createdAt: row.created_at,
@@ -80,6 +80,7 @@ function mapAlias(row: AliasRow): Alias {
     forwardTo: row.forward_to ?? undefined,
     id: row.id,
     retentionDays: row.retention_days,
+    tags,
     updatedAt: row.updated_at,
   };
 }
@@ -186,11 +187,109 @@ export function createD1Store(db: D1Database): AppStore {
     return grouped;
   }
 
+  async function readAliasTags(
+    aliasIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const grouped = new Map<string, string[]>();
+
+    if (aliasIds.length === 0) {
+      return grouped;
+    }
+
+    const query = `
+      SELECT at.alias_id, t.name
+      FROM alias_tags at
+      JOIN tags t ON t.id = at.tag_id
+      WHERE at.alias_id IN (${createPlaceholders(aliasIds.length)})
+      ORDER BY t.name ASC
+    `;
+    const result = await db.prepare(query).bind(...aliasIds).all<{
+      alias_id: string;
+      name: string;
+    }>();
+
+    for (const row of result.results ?? []) {
+      const current = grouped.get(row.alias_id) ?? [];
+      current.push(row.name);
+      grouped.set(row.alias_id, current);
+    }
+
+    return grouped;
+  }
+
+  async function ensureTagIds(
+    tagNames: string[],
+  ): Promise<Map<string, string>> {
+    const normalizedTagNames = uniqueTagNames(tagNames);
+    const tagIdsByName = new Map<string, string>();
+
+    if (normalizedTagNames.length === 0) {
+      return tagIdsByName;
+    }
+
+    const existingTags = await db.prepare(
+      `
+        SELECT id, name
+        FROM tags
+        WHERE name IN (${createPlaceholders(normalizedTagNames.length)})
+      `,
+    ).bind(...normalizedTagNames).all<{ id: string; name: string }>();
+
+    for (const row of existingTags.results ?? []) {
+      tagIdsByName.set(row.name, row.id);
+    }
+
+    for (const tagName of normalizedTagNames) {
+      if (tagIdsByName.has(tagName)) {
+        continue;
+      }
+
+      const tagId = crypto.randomUUID();
+      await db.prepare(
+        `INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)`,
+      ).bind(tagId, tagName, new Date().toISOString()).run();
+      tagIdsByName.set(tagName, tagId);
+    }
+
+    return tagIdsByName;
+  }
+
+  async function replaceAliasTags(
+    aliasId: string,
+    tagNames: string[],
+  ): Promise<string[]> {
+    const normalizedTagNames = uniqueTagNames(tagNames);
+
+    await db.prepare(
+      `DELETE FROM alias_tags WHERE alias_id = ?`,
+    ).bind(aliasId).run();
+
+    if (normalizedTagNames.length === 0) {
+      return [];
+    }
+
+    const tagIdsByName = await ensureTagIds(normalizedTagNames);
+
+    for (const tagName of normalizedTagNames) {
+      await db.prepare(
+        `INSERT INTO alias_tags (alias_id, tag_id) VALUES (?, ?)`,
+      ).bind(aliasId, tagIdsByName.get(tagName)!).run();
+    }
+
+    return normalizedTagNames;
+  }
+
   async function getAliasById(id: string): Promise<Alias | null> {
     const row = await db.prepare(
       `SELECT * FROM aliases WHERE id = ? LIMIT 1`,
     ).bind(id).first<AliasRow>();
-    return row ? mapAlias(row) : null;
+
+    if (!row) {
+      return null;
+    }
+
+    const tags = await readAliasTags([id]);
+    return mapAlias(row, tags.get(id) ?? []);
   }
 
   async function getRuleById(id: string): Promise<Rule | null> {
@@ -225,6 +324,7 @@ export function createD1Store(db: D1Database): AppStore {
         forwardTo: input.forwardTo?.trim() || undefined,
         id: crypto.randomUUID(),
         retentionDays: input.retentionDays,
+        tags: uniqueTagNames(input.tags ?? []),
         updatedAt: now,
       };
 
@@ -254,7 +354,11 @@ export function createD1Store(db: D1Database): AppStore {
         alias.updatedAt,
       ).run();
 
-      return alias;
+      if (alias.tags.length > 0) {
+        await replaceAliasTags(alias.id, alias.tags);
+      }
+
+      return (await getAliasById(alias.id))!;
     },
 
     async createMessage(input) {
@@ -390,7 +494,13 @@ export function createD1Store(db: D1Database): AppStore {
       const row = await db.prepare(
         `SELECT * FROM aliases WHERE address = ? LIMIT 1`,
       ).bind(normalizeAddress(address)).first<AliasRow>();
-      return row ? mapAlias(row) : null;
+
+      if (!row) {
+        return null;
+      }
+
+      const tags = await readAliasTags([row.id]);
+      return mapAlias(row, tags.get(row.id) ?? []);
     },
 
     findAliasById(id) {
@@ -405,7 +515,9 @@ export function createD1Store(db: D1Database): AppStore {
       const result = await db.prepare(
         `SELECT * FROM aliases ORDER BY created_at DESC`,
       ).all<AliasRow>();
-      return (result.results ?? []).map(mapAlias);
+      const rows = result.results ?? [];
+      const tags = await readAliasTags(rows.map((row) => row.id));
+      return rows.map((row) => mapAlias(row, tags.get(row.id) ?? []));
     },
 
     async listMessages(filters = {}) {
@@ -485,28 +597,7 @@ export function createD1Store(db: D1Database): AppStore {
         return [];
       }
 
-      const existingTags = await db.prepare(
-        `
-          SELECT id, name
-          FROM tags
-          WHERE name IN (${createPlaceholders(normalizedTagNames.length)})
-        `,
-      ).bind(...normalizedTagNames).all<{ id: string; name: string }>();
-      const tagIdsByName = new Map(
-        (existingTags.results ?? []).map((row) => [row.name, row.id]),
-      );
-
-      for (const tagName of normalizedTagNames) {
-        if (tagIdsByName.has(tagName)) {
-          continue;
-        }
-
-        const tagId = crypto.randomUUID();
-        await db.prepare(
-          `INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)`,
-        ).bind(tagId, tagName, new Date().toISOString()).run();
-        tagIdsByName.set(tagName, tagId);
-      }
+      const tagIdsByName = await ensureTagIds(normalizedTagNames);
 
       for (const tagName of normalizedTagNames) {
         await db.prepare(

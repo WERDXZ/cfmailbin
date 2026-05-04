@@ -24,6 +24,27 @@ function uniqueTagNames(tagNames: string[]): string[] {
   return [...next];
 }
 
+function ensureTagRecords(
+  tags: Map<string, Tag>,
+  tagIdsByName: Map<string, string>,
+  tagNames: string[],
+  createdAt = new Date().toISOString(),
+): void {
+  for (const tagName of uniqueTagNames(tagNames)) {
+    if (tagIdsByName.has(tagName)) {
+      continue;
+    }
+
+    const tagId = crypto.randomUUID();
+    tags.set(tagId, {
+      createdAt,
+      id: tagId,
+      name: tagName,
+    });
+    tagIdsByName.set(tagName, tagId);
+  }
+}
+
 function toStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream({
     start(controller) {
@@ -83,6 +104,7 @@ export function createMemoryStore(seed?: {
   const tokens = new Set(seed?.tokens ?? []);
 
   for (const alias of seed?.aliases ?? []) {
+    ensureTagRecords(tags, tagIdsByName, alias.tags, alias.createdAt);
     aliases.set(alias.id, clone(alias));
   }
 
@@ -107,12 +129,8 @@ export function createMemoryStore(seed?: {
 
         if (!tagId) {
           tagId = crypto.randomUUID();
-          tags.set(tagId, {
-            createdAt: message.createdAt,
-            id: tagId,
-            name: normalized,
-          });
-          tagIdsByName.set(normalized, tagId);
+          ensureTagRecords(tags, tagIdsByName, [normalized], message.createdAt);
+          tagId = tagIdsByName.get(normalized)!;
         }
 
         linkedTagIds.add(tagId);
@@ -171,8 +189,10 @@ export function createMemoryStore(seed?: {
         forwardTo: input.forwardTo?.trim() || undefined,
         id: crypto.randomUUID(),
         retentionDays: input.retentionDays,
+        tags: uniqueTagNames(input.tags ?? []),
         updatedAt: now,
       };
+      ensureTagRecords(tags, tagIdsByName, alias.tags, now);
       aliases.set(alias.id, alias);
       return Promise.resolve(clone(alias));
     },

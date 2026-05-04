@@ -69,12 +69,15 @@ export async function processIncomingEmail(params: {
   let alias = await params.store.findAliasByAddress(aliasAddress);
 
   if (!alias && params.config.allowCatchAll) {
+    const autoCreateTag = params.config.autoCreateAliasTag;
+
     alias = await params.store.ensureAliasByAddress({
       address: aliasAddress,
       defaultAction: defaultAliasAction(params.config),
       enabled: true,
       forwardTo: params.config.defaultForwardTo,
       retentionDays: params.config.defaultRetentionDays,
+      tags: autoCreateTag ? [autoCreateTag] : undefined,
     });
   }
 

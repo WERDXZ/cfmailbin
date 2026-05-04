@@ -18,6 +18,7 @@ function createBackend() {
     config: {
       allowCatchAll: false,
       appName: "cfmailbin",
+      autoCreateAliasTag: undefined,
       defaultForwardTo: "owner@example.com",
       defaultRetentionDays: 7,
     },
@@ -42,6 +43,7 @@ Deno.test("api can create and list aliases", async () => {
         address: "shop@example.com",
         defaultAction: "forward",
         retentionDays: 14,
+        tags: ["manual"],
       }),
       headers: authHeaders(),
       method: "POST",
@@ -53,6 +55,7 @@ Deno.test("api can create and list aliases", async () => {
   const alias = await createResponse.json();
   assertEquals(alias.address, "shop@example.com");
   assertEquals(alias.defaultAction, "forward");
+  assertEquals(alias.tags, ["manual"]);
 
   const listResponse = await handleRequest(
     new Request("http://localhost/api/aliases", { headers: authHeaders() }),
@@ -63,6 +66,7 @@ Deno.test("api can create and list aliases", async () => {
   assertEquals(listResponse.status, 200);
   assertEquals(aliases.length, 1);
   assertEquals(aliases[0].address, "shop@example.com");
+  assertEquals(aliases[0].tags, ["manual"]);
 });
 
 Deno.test("api can replace message tags and fetch raw message", async () => {

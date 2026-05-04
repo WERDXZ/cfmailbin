@@ -347,6 +347,7 @@ async function handleApiRequest(
       aliases,
       config: {
         allowCatchAll: backend.config.allowCatchAll,
+        autoCreateAliasTag: backend.config.autoCreateAliasTag,
         defaultRetentionDays: backend.config.defaultRetentionDays,
         forwardingConfigured: Boolean(backend.config.defaultForwardTo),
       },
@@ -372,6 +373,7 @@ async function handleApiRequest(
         forwardTo: optionalNullableString(body, "forwardTo"),
         retentionDays: optionalPositiveInteger(body, "retentionDays") ??
           backend.config.defaultRetentionDays,
+        tags: optionalStringArray(body, "tags"),
       };
       const alias = await backend.store.createAlias(input);
       return jsonResponse(alias, { status: 201 });

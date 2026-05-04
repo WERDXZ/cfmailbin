@@ -1,4 +1,5 @@
 export interface CfMailBinConfig {
+  autoCreateAliasTag?: string;
   appName: string;
   defaultForwardTo?: string;
   defaultRetentionDays: number;
@@ -8,6 +9,7 @@ export interface CfMailBinConfig {
 export interface CfMailBinBindings {
   CFMAILBIN_ALLOW_CATCH_ALL?: string;
   CFMAILBIN_APP_NAME?: string;
+  CFMAILBIN_AUTO_CREATE_ALIAS_TAG?: string;
   CFMAILBIN_DEFAULT_RETENTION_DAYS?: string;
   CFMAILBIN_FORWARD_TO?: string;
 }
@@ -35,6 +37,8 @@ export function readConfig(
   return {
     allowCatchAll: parseBoolean(env.CFMAILBIN_ALLOW_CATCH_ALL, false),
     appName: env.CFMAILBIN_APP_NAME ?? "cfmailbin",
+    autoCreateAliasTag: env.CFMAILBIN_AUTO_CREATE_ALIAS_TAG?.trim() ||
+      undefined,
     defaultForwardTo: env.CFMAILBIN_FORWARD_TO,
     defaultRetentionDays: parseNumber(
       env.CFMAILBIN_DEFAULT_RETENTION_DAYS,

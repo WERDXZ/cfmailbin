@@ -124,7 +124,8 @@ The frontend tooling is still Vite-based, but it is launched through Deno with
 - `./dist/ui` as Workers Assets for the frontend dashboard
 - `DB` as the D1 binding
 - `RAW_EMAILS` as the R2 binding
-- app vars for catch-all mode, retention, and forwarding
+- app vars for catch-all mode, auto-created alias tagging, retention, and
+  forwarding
 - an hourly cleanup cron for expired mail
 - a deploy-time build step that runs `deno task ui:build`
 
@@ -139,6 +140,7 @@ Before deploying, replace the placeholder values in `wrangler.toml`:
 - `database_id`
 - `bucket_name`
 - `preview_bucket_name`
+- optional `CFMAILBIN_AUTO_CREATE_ALIAS_TAG`
 - optional `CFMAILBIN_FORWARD_TO`
 
 Before deploying for the first time, also make sure `dist/ui` exists locally by
@@ -161,6 +163,7 @@ The repo now has a working backend skeleton:
 - authenticated HTTP routes for aliases, rules, messages, raw message reads, and
   tags
 - inbound email processing with optional catch-all alias creation
+- optional tag assignment for auto-created aliases
 - scheduled retention cleanup
 - a CSR Preact dashboard for token entry, alias management, rule creation,
   message filtering, tag editing, and raw message downloads

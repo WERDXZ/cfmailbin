@@ -16,6 +16,7 @@ enabled = true
 [vars]
 CFMAILBIN_APP_NAME = "cfmailbin"
 CFMAILBIN_ALLOW_CATCH_ALL = "false"
+# CFMAILBIN_AUTO_CREATE_ALIAS_TAG = "auto-created"
 CFMAILBIN_DEFAULT_RETENTION_DAYS = "7"
 # CFMAILBIN_FORWARD_TO = "owner@example.com"
 

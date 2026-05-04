@@ -43,6 +43,7 @@ Deno.test("email processing auto-creates aliases in catch-all mode", async () =>
     config: {
       allowCatchAll: true,
       appName: "cfmailbin",
+      autoCreateAliasTag: "auto-created",
       defaultForwardTo: "owner@example.com",
       defaultRetentionDays: 7,
     },
@@ -59,6 +60,7 @@ Deno.test("email processing auto-creates aliases in catch-all mode", async () =>
 
   assertEquals(aliases.length, 1);
   assertEquals(aliases[0].address, "new-alias@example.com");
+  assertEquals(aliases[0].tags, ["auto-created"]);
   assertEquals(messages.length, 1);
   assertEquals(messages[0].status, "forwarded");
 });

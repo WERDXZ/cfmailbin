@@ -11,6 +11,7 @@ export interface Alias {
   enabled: boolean;
   forwardTo?: string;
   retentionDays: number;
+  tags: string[];
   updatedAt: string;
 }
 
@@ -21,6 +22,7 @@ export interface CreateAliasInput {
   enabled?: boolean;
   forwardTo?: string;
   retentionDays: number;
+  tags?: string[];
 }
 
 export interface UpdateAliasInput {

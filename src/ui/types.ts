@@ -11,6 +11,7 @@ export interface Alias {
   forwardTo?: string;
   id: string;
   retentionDays: number;
+  tags: string[];
   updatedAt: string;
 }
 
@@ -52,6 +53,7 @@ export interface BootstrapResponse {
   aliases: Alias[];
   config: {
     allowCatchAll: boolean;
+    autoCreateAliasTag?: string;
     defaultRetentionDays: number;
     forwardingConfigured: boolean;
   };
@@ -72,6 +74,7 @@ export interface CreateAliasInput {
   enabled?: boolean;
   forwardTo?: string;
   retentionDays: number;
+  tags?: string[];
 }
 
 export interface CreateRuleInput {

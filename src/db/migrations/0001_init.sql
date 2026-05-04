@@ -59,7 +59,14 @@ CREATE TABLE IF NOT EXISTS message_tags (
   PRIMARY KEY (message_id, tag_id)
 );
 
+CREATE TABLE IF NOT EXISTS alias_tags (
+  alias_id TEXT NOT NULL REFERENCES aliases(id) ON DELETE CASCADE,
+  tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (alias_id, tag_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_aliases_address ON aliases(address);
+CREATE INDEX IF NOT EXISTS idx_alias_tags_alias_id ON alias_tags(alias_id);
 CREATE INDEX IF NOT EXISTS idx_rules_alias_id ON rules(alias_id);
 CREATE INDEX IF NOT EXISTS idx_messages_alias_id ON messages(alias_id);
 CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);

@@ -437,6 +437,14 @@ export function App() {
               {" "}
               days
             </span>
+            {bootstrap?.config.autoCreateAliasTag
+              ? (
+                <span>
+                  auto-created aliases tagged as{" "}
+                  <code>{bootstrap.config.autoCreateAliasTag}</code>
+                </span>
+              )
+              : null}
           </div>
           <div class="hero__actions">
             <button
@@ -602,6 +610,15 @@ export function App() {
                   <span>{alias.defaultAction}</span>
                   <span>{alias.retentionDays}d retention</span>
                 </div>
+                {alias.tags.length > 0
+                  ? (
+                    <div class="tag-cloud">
+                      {alias.tags.map((tag) => (
+                        <span class="pill pill--tag" key={tag}>{tag}</span>
+                      ))}
+                    </div>
+                  )
+                  : null}
                 <button
                   class="button button--ghost"
                   onClick={() => void handleAliasToggle(alias)}

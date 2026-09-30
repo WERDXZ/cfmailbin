@@ -326,6 +326,39 @@ Deno.test("deleting mail during analysis never recreates the message", async () 
   assertEquals(await store.getMessage(result.messageId!), null);
 });
 
+Deno.test("AI failures persist safe diagnostic details in D1 and logs", async () => {
+  const fixture = sqliteStore();
+  const logs: unknown[][] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => logs.push(args);
+  try {
+    const result = await processIncomingEmail({
+      config,
+      store: fixture.store,
+      blobStore: createMemoryBlobStore(),
+      message: mail(),
+      analysisFetch: () =>
+        Promise.resolve(new Response("private upstream body", { status: 401 })),
+    });
+    const saved = (await fixture.store.getMessage(result.messageId!))!;
+    assertEquals<unknown>(saved.analysis, {
+      provider: "deepseek",
+      model: "deepseek-flash",
+      status: "failed",
+      reason: "authentication",
+      httpStatus: 401,
+    });
+    assertEquals(saved.status, "inbox");
+    assertEquals(logs.length, 1);
+    assert(!JSON.stringify(logs).includes("private upstream body"));
+    assert(!JSON.stringify(logs).includes("test-secret-never-public"));
+    assert(!JSON.stringify(logs).includes("001234"));
+  } finally {
+    console.warn = warn;
+    fixture.close();
+  }
+});
+
 Deno.test("incomplete or invalid Gateway settings disable AI without blocking receipt", async () => {
   let calls = 0;
   for (

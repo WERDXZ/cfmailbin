@@ -1,7 +1,11 @@
 import type { CfMailBinConfig } from "../config.ts";
 import { analysisModels, type MessageAnalysis } from "../domain/analysis.ts";
 import type { MessageContent } from "../domain/models.ts";
-import { type AnalysisFetch, analyzeEmail } from "../email/analysis.ts";
+import {
+  AnalysisError,
+  type AnalysisFetch,
+  analyzeEmail,
+} from "../email/analysis.ts";
 import type { AppStore } from "../storage/types.ts";
 
 export function pendingAnalysis(
@@ -53,10 +57,21 @@ export async function enrichMessage(params: {
       analysis: result.analysis,
       verificationCodes: result.codes,
     });
-  } catch {
+  } catch (error) {
     // Never log upstream bodies, email text, credentials or extracted codes.
+    const failure = error instanceof AnalysisError
+      ? {
+        reason: error.reason,
+        ...(error.httpStatus ? { httpStatus: error.httpStatus } : {}),
+      }
+      : { reason: "storage_error" as const };
+    console.warn("Email analysis failed", {
+      messageId: params.id,
+      ...base,
+      ...failure,
+    });
     await params.store.updateMessage(params.id, {
-      analysis: { ...base, status: "failed", reason: "unavailable" },
+      analysis: { ...base, status: "failed", ...failure },
     }).catch(() => console.error("Email analysis result could not be saved"));
   }
 }

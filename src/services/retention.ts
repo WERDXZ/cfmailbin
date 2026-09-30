@@ -20,5 +20,45 @@ export async function purgeExpiredMessages(
     await blobStore.deleteMany(expired.rawKeys);
   }
 
+  await Promise.all(expired.messages.map((message) =>
+    store.createAuditEvent({
+      aliasAddress: message.aliasAddress,
+      eventType: "expired_deleted",
+      messageId: message.id,
+      sender: message.from,
+      status: message.status,
+      subjectPreview: message.subject,
+    })
+  ));
+
   return { deletedCount: expired.count };
+}
+
+export async function deleteMessages(
+  store: AppStore,
+  blobStore: BlobStore,
+  ids: string[],
+): Promise<{ deleted: number; missing: string[]; rawDeleted: number }> {
+  const result = await store.deleteMessages(ids);
+
+  if (result.rawKeys.length > 0) {
+    await blobStore.deleteMany(result.rawKeys);
+  }
+
+  await Promise.all(result.deleted.map((message) =>
+    store.createAuditEvent({
+      aliasAddress: message.aliasAddress,
+      eventType: "manual_deleted",
+      messageId: message.id,
+      sender: message.from,
+      status: message.status,
+      subjectPreview: message.subject,
+    })
+  ));
+
+  return {
+    deleted: result.deleted.length,
+    missing: result.missing,
+    rawDeleted: result.rawKeys.length,
+  };
 }

@@ -1,0 +1,7 @@
+{
+  "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "lib": ["esnext"],
+    "types": ["./src/platform/worker-configuration.d.ts"]
+  }
+}

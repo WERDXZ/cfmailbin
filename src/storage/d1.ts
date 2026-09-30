@@ -1,9 +1,16 @@
-import type { Alias, MessageRecord, Rule, Tag } from "../domain/models.ts";
-import { normalizeAddress } from "../domain/rules.ts";
+import type {
+  Alias,
+  AuditEvent,
+  MessageRecord,
+  Rule,
+  Tag,
+} from "../domain/models.ts";
+import { makeRule, normalizeAddress, patchRule } from "../domain/rules.ts";
 import type { D1Database, R2Bucket } from "../platform/cloudflare.ts";
 import type { AppStore, BlobStore } from "./types.ts";
 
 interface AliasRow {
+  last_received_at: string | null;
   address: string;
   created_at: string;
   default_action: Alias["defaultAction"];
@@ -16,6 +23,11 @@ interface AliasRow {
 }
 
 interface RuleRow {
+  name: string | null;
+  condition_json: string | null;
+  actions_json: string | null;
+  priority: number;
+  stop_processing: number;
   action: Rule["action"];
   alias_id: string | null;
   created_at: string;
@@ -27,6 +39,9 @@ interface RuleRow {
 }
 
 interface MessageRow {
+  analysis_json: string | null;
+  rule_trace: string | null;
+  verification_codes: string | null;
   alias_address: string;
   alias_id: string;
   created_at: string;
@@ -46,6 +61,19 @@ interface TagRow {
   created_at: string;
   id: string;
   name: string;
+}
+
+interface AuditEventRow {
+  alias_address: string | null;
+  created_at: string;
+  event_type: AuditEvent["eventType"];
+  id: string;
+  message_id: string | null;
+  metadata_json: string | null;
+  reason: string | null;
+  sender: string | null;
+  status: AuditEvent["status"] | null;
+  subject_preview: string | null;
 }
 
 function createPlaceholders(count: number): string {
@@ -74,6 +102,7 @@ function mapAlias(row: AliasRow, tags: string[]): Alias {
   return {
     address: row.address,
     createdAt: row.created_at,
+    lastReceivedAt: row.last_received_at ?? undefined,
     defaultAction: row.default_action,
     description: row.description ?? undefined,
     enabled: Boolean(row.enabled),
@@ -87,6 +116,11 @@ function mapAlias(row: AliasRow, tags: string[]): Alias {
 
 function mapRule(row: RuleRow): Rule {
   return {
+    name: row.name ?? undefined,
+    condition: row.condition_json ? JSON.parse(row.condition_json) : undefined,
+    actions: row.actions_json ? JSON.parse(row.actions_json) : undefined,
+    priority: row.priority,
+    stopProcessing: Boolean(row.stop_processing),
     action: row.action,
     aliasId: row.alias_id,
     createdAt: row.created_at,
@@ -100,6 +134,8 @@ function mapRule(row: RuleRow): Rule {
 
 function mapMessage(row: MessageRow, tags: string[]): MessageRecord {
   return {
+    analysis: row.analysis_json ? JSON.parse(row.analysis_json) : undefined,
+    ruleTrace: row.rule_trace ? JSON.parse(row.rule_trace) : undefined,
     aliasAddress: row.alias_address,
     aliasId: row.alias_id,
     createdAt: row.created_at,
@@ -109,6 +145,9 @@ function mapMessage(row: MessageRow, tags: string[]): MessageRecord {
     id: row.id,
     matchedRuleId: row.matched_rule_id ?? undefined,
     preview: row.preview ?? undefined,
+    verificationCodes: row.verification_codes == null
+      ? undefined
+      : JSON.parse(row.verification_codes),
     rawKey: row.raw_key ?? undefined,
     receivedAt: row.received_at,
     status: row.status,
@@ -122,6 +161,23 @@ function mapTag(row: TagRow): Tag {
     createdAt: row.created_at,
     id: row.id,
     name: row.name,
+  };
+}
+
+function mapAuditEvent(row: AuditEventRow): AuditEvent {
+  return {
+    aliasAddress: row.alias_address ?? undefined,
+    createdAt: row.created_at,
+    eventType: row.event_type,
+    id: row.id,
+    messageId: row.message_id ?? undefined,
+    metadata: row.metadata_json
+      ? JSON.parse(row.metadata_json) as Record<string, unknown>
+      : undefined,
+    reason: row.reason ?? undefined,
+    sender: row.sender ?? undefined,
+    status: row.status ?? undefined,
+    subjectPreview: row.subject_preview ?? undefined,
   };
 }
 
@@ -313,6 +369,56 @@ export function createD1Store(db: D1Database): AppStore {
   }
 
   return {
+    async createAuditEvent(input) {
+      const event: AuditEvent = {
+        aliasAddress: input.aliasAddress
+          ? normalizeAddress(input.aliasAddress)
+          : undefined,
+        createdAt: new Date().toISOString(),
+        eventType: input.eventType,
+        id: crypto.randomUUID(),
+        messageId: input.messageId,
+        metadata: input.metadata,
+        reason: input.reason,
+        sender: input.sender,
+        status: input.status,
+        subjectPreview: input.subjectPreview?.slice(0, 180),
+      };
+
+      await db.prepare(
+        `
+          INSERT INTO audit_events (
+            id,
+            event_type,
+            alias_address,
+            message_id,
+            sender,
+            subject_preview,
+            status,
+            reason,
+            metadata_json,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).bind(
+        event.id,
+        event.eventType,
+        event.aliasAddress ?? null,
+        event.messageId ?? null,
+        event.sender ?? null,
+        event.subjectPreview ?? null,
+        event.status ?? null,
+        event.reason ?? null,
+        event.metadata ? JSON.stringify(event.metadata) : null,
+        event.createdAt,
+      ).run();
+
+      const row = await db.prepare(
+        `SELECT * FROM audit_events WHERE id = ? LIMIT 1`,
+      ).bind(event.id).first<AuditEventRow>();
+      return mapAuditEvent(row!);
+    },
+
     async createAlias(input) {
       const now = new Date().toISOString();
       const alias: Alias = {
@@ -364,6 +470,7 @@ export function createD1Store(db: D1Database): AppStore {
     async createMessage(input) {
       const now = new Date().toISOString();
       const message: MessageRecord = {
+        analysis: input.analysis,
         aliasAddress: normalizeAddress(input.aliasAddress),
         aliasId: input.aliasId,
         createdAt: now,
@@ -373,6 +480,8 @@ export function createD1Store(db: D1Database): AppStore {
         id: crypto.randomUUID(),
         matchedRuleId: input.matchedRuleId,
         preview: input.preview,
+        verificationCodes: input.verificationCodes,
+        ruleTrace: input.ruleTrace,
         rawKey: input.rawKey,
         receivedAt: input.receivedAt,
         status: input.status,
@@ -395,8 +504,11 @@ export function createD1Store(db: D1Database): AppStore {
             raw_key,
             forwarded_to,
             matched_rule_id,
-            created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            created_at,
+            verification_codes,
+            rule_trace,
+            analysis_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       ).bind(
         message.id,
@@ -412,7 +524,16 @@ export function createD1Store(db: D1Database): AppStore {
         message.forwardedTo ?? null,
         message.matchedRuleId ?? null,
         message.createdAt,
+        message.verificationCodes === undefined
+          ? null
+          : JSON.stringify(message.verificationCodes),
+        message.ruleTrace ? JSON.stringify(message.ruleTrace) : null,
+        message.analysis ? JSON.stringify(message.analysis) : null,
       ).run();
+
+      await db.prepare(`UPDATE aliases SET last_received_at = ?
+        WHERE id = ? AND (last_received_at IS NULL OR last_received_at < ?)`)
+        .bind(message.receivedAt, message.aliasId, message.receivedAt).run();
 
       if (input.tags && input.tags.length > 0) {
         await this.replaceMessageTags(message.id, input.tags);
@@ -422,57 +543,46 @@ export function createD1Store(db: D1Database): AppStore {
     },
 
     async createRule(input) {
-      const now = new Date().toISOString();
-      const rule: Rule = {
-        action: input.action,
-        aliasId: input.aliasId ?? null,
-        createdAt: now,
-        enabled: input.enabled ?? true,
-        field: input.field,
-        id: crypto.randomUUID(),
-        pattern: input.pattern.trim(),
-        updatedAt: now,
-      };
-
+      const row = await db.prepare(
+        "SELECT COALESCE(MAX(priority), 0) AS priority FROM rules",
+      ).first<{ priority: number }>();
+      const rule = makeRule(input, (row?.priority ?? 0) + 10);
       await db.prepare(
-        `
-          INSERT INTO rules (
-            id,
-            alias_id,
-            field,
-            pattern,
-            action,
-            enabled,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      ).bind(
-        rule.id,
-        rule.aliasId,
-        rule.field,
-        rule.pattern,
-        rule.action,
-        rule.enabled ? 1 : 0,
-        rule.createdAt,
-        rule.updatedAt,
-      ).run();
-
+        `INSERT INTO rules (id, alias_id, field, pattern, action, enabled, created_at, updated_at,
+        name, condition_json, actions_json, priority, stop_processing)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          rule.id,
+          rule.aliasId,
+          rule.field,
+          rule.pattern,
+          rule.action,
+          rule.enabled ? 1 : 0,
+          rule.createdAt,
+          rule.updatedAt,
+          rule.name ?? null,
+          JSON.stringify(rule.condition),
+          JSON.stringify(rule.actions),
+          rule.priority,
+          rule.stopProcessing ? 1 : 0,
+        ).run();
       return rule;
     },
 
     async deleteExpiredMessages(before) {
       const result = await db.prepare(
-        `SELECT id, raw_key FROM messages WHERE expires_at <= ?`,
-      ).bind(before).all<{ id: string; raw_key: string | null }>();
+        `SELECT * FROM messages WHERE expires_at <= ?`,
+      ).bind(before).all<MessageRow>();
       const rows = result.results ?? [];
 
       if (rows.length === 0) {
-        return { count: 0, rawKeys: [] };
+        return { count: 0, messages: [], rawKeys: [] };
       }
 
       const messageIds = rows.map((row) => row.id);
       const rawKeys = rows.flatMap((row) => row.raw_key ? [row.raw_key] : []);
+      const tags = await readMessageTags(messageIds);
       await db.prepare(
         `DELETE FROM messages WHERE id IN (${
           createPlaceholders(messageIds.length)
@@ -481,7 +591,47 @@ export function createD1Store(db: D1Database): AppStore {
 
       return {
         count: messageIds.length,
+        messages: rows.map((row) => mapMessage(row, tags.get(row.id) ?? [])),
         rawKeys,
+      };
+    },
+
+    async deleteMessages(ids) {
+      const uniqueIds = [
+        ...new Set(ids.map((id) => id.trim()).filter(Boolean)),
+      ];
+
+      if (uniqueIds.length === 0) {
+        return { deleted: [], missing: [], rawKeys: [] };
+      }
+
+      const result = await db.prepare(
+        `
+          SELECT *
+          FROM messages
+          WHERE id IN (${createPlaceholders(uniqueIds.length)})
+        `,
+      ).bind(...uniqueIds).all<MessageRow>();
+      const rows = result.results ?? [];
+      const foundIds = new Set(rows.map((row) => row.id));
+      const deletedIds = rows.map((row) => row.id);
+      const missing = uniqueIds.filter((id) => !foundIds.has(id));
+
+      if (deletedIds.length === 0) {
+        return { deleted: [], missing, rawKeys: [] };
+      }
+
+      const tags = await readMessageTags(deletedIds);
+      await db.prepare(
+        `DELETE FROM messages WHERE id IN (${
+          createPlaceholders(deletedIds.length)
+        })`,
+      ).bind(...deletedIds).run();
+
+      return {
+        deleted: rows.map((row) => mapMessage(row, tags.get(row.id) ?? [])),
+        missing,
+        rawKeys: rows.flatMap((row) => row.raw_key ? [row.raw_key] : []),
       };
     },
 
@@ -511,9 +661,44 @@ export function createD1Store(db: D1Database): AppStore {
       return getMessageById(id);
     },
 
+    async getDeliveryStatus(domain) {
+      async function latest(types: string[]) {
+        const domainClause = domain
+          ? "AND substr(alias_address, instr(alias_address, '@') + 1) = ?"
+          : "";
+        return await db.prepare(`SELECT * FROM audit_events
+          WHERE event_type IN (${
+          createPlaceholders(types.length)
+        }) ${domainClause}
+          ORDER BY created_at DESC LIMIT 1`)
+          .bind(...types, ...(domain ? [domain] : [])).first<AuditEventRow>();
+      }
+      const [received, rejected] = await Promise.all([
+        latest(["received"]),
+        latest(["rejected_unknown", "rejected_disabled", "blocked_by_rule"]),
+      ]);
+      return {
+        ...(received ? { lastReceived: mapAuditEvent(received) } : {}),
+        ...(rejected ? { lastRejected: mapAuditEvent(rejected) } : {}),
+      };
+    },
+
+    async listAuditEvents(limit = 100) {
+      const cappedLimit = Math.max(1, Math.min(limit, 500));
+      const result = await db.prepare(
+        `
+          SELECT *
+          FROM audit_events
+          ORDER BY created_at DESC
+          LIMIT ?
+        `,
+      ).bind(cappedLimit).all<AuditEventRow>();
+      return (result.results ?? []).map(mapAuditEvent);
+    },
+
     async listAliases() {
       const result = await db.prepare(
-        `SELECT * FROM aliases ORDER BY created_at DESC`,
+        `SELECT * FROM aliases ORDER BY last_received_at DESC, created_at DESC`,
       ).all<AliasRow>();
       const rows = result.results ?? [];
       const tags = await readAliasTags(rows.map((row) => row.id));
@@ -539,10 +724,12 @@ export function createD1Store(db: D1Database): AppStore {
         clauses.push(`(
           lower(alias_address) LIKE ? OR
           lower(sender) LIKE ? OR
-          lower(subject) LIKE ?
+          lower(subject) LIKE ? OR
+          lower(preview) LIKE ? OR
+          alias_id IN (SELECT id FROM aliases WHERE lower(description) LIKE ?)
         )`);
         const query = `%${filters.q.trim().toLowerCase()}%`;
-        values.push(query, query, query);
+        values.push(query, query, query, query, query);
       }
 
       const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
@@ -562,9 +749,19 @@ export function createD1Store(db: D1Database): AppStore {
 
     async listRules() {
       const result = await db.prepare(
-        `SELECT * FROM rules ORDER BY created_at DESC`,
+        `SELECT * FROM rules ORDER BY priority, created_at, id`,
       ).all<RuleRow>();
       return (result.results ?? []).map(mapRule);
+    },
+
+    async reorderRules(ids) {
+      // One statement keeps the order atomic and uses only three bound parameters.
+      const json = JSON.stringify(ids);
+      await db.prepare(`UPDATE rules SET priority = (
+        SELECT (CAST(key AS INTEGER) + 1) * 10 FROM json_each(?) WHERE value = rules.id
+      ), updated_at = ? WHERE id IN (SELECT value FROM json_each(?))`)
+        .bind(json, new Date().toISOString(), json).run();
+      return this.listRules();
     },
 
     async listRulesForAlias(aliasId) {
@@ -573,7 +770,7 @@ export function createD1Store(db: D1Database): AppStore {
           SELECT *
           FROM rules
           WHERE alias_id IS NULL OR alias_id = ?
-          ORDER BY CASE WHEN alias_id IS NULL THEN 1 ELSE 0 END, created_at ASC
+          ORDER BY priority, created_at, id
         `,
       ).bind(aliasId).all<RuleRow>();
       return (result.results ?? []).map(mapRule);
@@ -659,6 +856,16 @@ export function createD1Store(db: D1Database): AppStore {
       const assignments: string[] = [];
       const values: unknown[] = [];
 
+      if (patch.analysis !== undefined) {
+        assignments.push(`analysis_json = ?`);
+        values.push(JSON.stringify(patch.analysis));
+      }
+
+      if (patch.verificationCodes !== undefined) {
+        assignments.push(`verification_codes = ?`);
+        values.push(JSON.stringify(patch.verificationCodes));
+      }
+
       if (patch.status !== undefined) {
         assignments.push(`status = ?`);
         values.push(patch.status);
@@ -676,53 +883,56 @@ export function createD1Store(db: D1Database): AppStore {
       return getMessageById(id);
     },
 
-    async updateRule(id, patch) {
-      const assignments: string[] = [];
-      const values: unknown[] = [];
-
-      if (patch.action !== undefined) {
-        assignments.push(`action = ?`);
-        values.push(patch.action);
-      }
-
-      if (patch.aliasId !== undefined) {
-        assignments.push(`alias_id = ?`);
-        values.push(patch.aliasId);
-      }
-
-      if (patch.enabled !== undefined) {
-        assignments.push(`enabled = ?`);
-        values.push(patch.enabled ? 1 : 0);
-      }
-
-      if (patch.field !== undefined) {
-        assignments.push(`field = ?`);
-        values.push(patch.field);
-      }
-
-      if (patch.pattern !== undefined) {
-        assignments.push(`pattern = ?`);
-        values.push(patch.pattern.trim());
-      }
-
-      if (assignments.length === 0) {
-        return getRuleById(id);
-      }
-
-      assignments.push(`updated_at = ?`);
-      values.push(new Date().toISOString(), id);
-      await db.prepare(
-        `UPDATE rules SET ${assignments.join(", ")} WHERE id = ?`,
-      ).bind(...values).run();
-
-      return getRuleById(id);
+    async reserveAnalysisCall(day, limit) {
+      if (limit <= 0) return false;
+      const row = await db.prepare(`
+        INSERT INTO ai_daily_usage (day, calls) VALUES (?, 1)
+        ON CONFLICT(day) DO UPDATE SET calls = calls + 1 WHERE calls < ?
+        RETURNING day
+      `).bind(day, limit).first<{ day: string }>();
+      return row !== null;
     },
 
-    async validateToken(token) {
-      const row = await db.prepare(
-        `SELECT token FROM tokens WHERE token = ? LIMIT 1`,
-      ).bind(token).first<{ token: string }>();
-      return Boolean(row);
+    async claimMessageAnalysis(id) {
+      const row = await db.prepare(`
+        UPDATE messages SET analysis_json = json_set(analysis_json, '$.status', 'running')
+        WHERE id = ? AND json_extract(analysis_json, '$.status') = 'pending'
+        RETURNING id
+      `).bind(id).first<{ id: string }>();
+      return row !== null;
+    },
+
+    async updateRule(id, patch) {
+      const current = await getRuleById(id);
+      if (!current) return null;
+      const rule = patchRule(current, patch);
+      const columns: Record<string, unknown> = { updated_at: rule.updatedAt };
+      if (patch.aliasId !== undefined) columns.alias_id = rule.aliasId;
+      if (patch.field !== undefined) columns.field = rule.field;
+      if (patch.pattern !== undefined) columns.pattern = rule.pattern;
+      if (patch.action !== undefined || patch.actions?.delivery !== undefined) {
+        columns.action = rule.action;
+      }
+      if (patch.enabled !== undefined) columns.enabled = rule.enabled ? 1 : 0;
+      if (patch.name !== undefined) columns.name = rule.name;
+      if (patch.priority !== undefined) columns.priority = rule.priority;
+      if (patch.stopProcessing !== undefined) {
+        columns.stop_processing = rule.stopProcessing ? 1 : 0;
+      }
+      if (
+        patch.condition !== undefined || patch.field !== undefined ||
+        patch.pattern !== undefined
+      ) columns.condition_json = JSON.stringify(rule.condition);
+      if (patch.actions !== undefined || patch.action !== undefined) {
+        columns.actions_json = JSON.stringify(rule.actions);
+      }
+      await db.prepare(
+        `UPDATE rules SET ${
+          Object.keys(columns).map((column) => `${column} = ?`).join(", ")
+        } WHERE id = ?`,
+      )
+        .bind(...Object.values(columns), id).run();
+      return getRuleById(id);
     },
   };
 }

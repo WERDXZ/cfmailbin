@@ -27,11 +27,11 @@ export interface R2Bucket {
     key: string,
     value: Uint8Array,
     options?: { httpMetadata?: { contentType?: string } },
-  ): Promise<void>;
+  ): Promise<unknown>;
 }
 
 export interface ForwardableEmailMessage {
-  forward(destination: string): Promise<void>;
+  forward(destination: string): Promise<unknown>;
   from: string;
   headers: Headers;
   raw: ReadableStream<Uint8Array>;

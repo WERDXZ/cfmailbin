@@ -1,4 +1,7 @@
 import type { CfMailBinConfig } from "../config.ts";
+import { decodeWords } from "postal-mime";
+import { parseMessageContent } from "./content.ts";
+import { withContent } from "./rule-context.ts";
 import type { Alias, IncomingMessage, RuleAction } from "../domain/models.ts";
 import {
   messageStatusForAction,
@@ -7,6 +10,8 @@ import {
 } from "../domain/rules.ts";
 import type { ForwardableEmailMessage } from "../platform/cloudflare.ts";
 import { computeExpiresAt } from "../services/retention.ts";
+import { enrichMessage, pendingAnalysis } from "../services/email-analysis.ts";
+import type { AnalysisFetch } from "./analysis.ts";
 import type { AppStore, BlobStore } from "../storage/types.ts";
 
 export interface EmailProcessingResult {
@@ -63,10 +68,13 @@ export async function processIncomingEmail(params: {
   config: CfMailBinConfig;
   message: ForwardableEmailMessage;
   store: AppStore;
+  waitUntil?: (task: Promise<unknown>) => void;
+  analysisFetch?: AnalysisFetch;
 }): Promise<EmailProcessingResult> {
   const receivedAt = new Date().toISOString();
   const aliasAddress = normalizeAddress(params.message.to);
   let alias = await params.store.findAliasByAddress(aliasAddress);
+  let autoCreatedAlias = false;
 
   if (!alias && params.config.allowCatchAll) {
     const autoCreateTag = params.config.autoCreateAliasTag;
@@ -79,10 +87,19 @@ export async function processIncomingEmail(params: {
       retentionDays: params.config.defaultRetentionDays,
       tags: autoCreateTag ? [autoCreateTag] : undefined,
     });
+    autoCreatedAlias = true;
   }
 
   if (!alias || !alias.enabled) {
-    params.message.setReject("Unknown or disabled alias");
+    const reason = alias ? "Unknown or disabled alias" : "Unknown alias";
+    params.message.setReject(reason);
+    await params.store.createAuditEvent({
+      aliasAddress,
+      eventType: alias ? "rejected_disabled" : "rejected_unknown",
+      reason,
+      sender: params.message.from,
+      subjectPreview: params.message.headers.get("subject")?.trim() ?? "",
+    });
 
     return {
       action: "block",
@@ -96,13 +113,44 @@ export async function processIncomingEmail(params: {
     from: params.message.from,
     rawSize: params.message.rawSize,
     receivedAt,
-    subject: params.message.headers.get("subject")?.trim() ?? "",
+    subject: decodeWords(params.message.headers.get("subject")?.trim() ?? ""),
   };
+
+  if (autoCreatedAlias) {
+    await params.store.createAuditEvent({
+      aliasAddress,
+      eventType: "auto_alias_created",
+      metadata: { aliasId: alias.id },
+      sender: incoming.from,
+      subjectPreview: incoming.subject,
+    });
+  }
+
   const rules = await params.store.listRulesForAlias(alias.id);
-  const decision = resolveMessageAction(alias, rules, incoming);
+  const rawBytes = await readAllBytes(params.message.raw);
+  const content = await parseMessageContent(rawBytes);
+  const decision = resolveMessageAction(
+    alias,
+    rules,
+    withContent(incoming, content),
+  );
+  const ruleTrace = decision.trace.filter((trace) =>
+    trace.condition.result !== false
+  );
 
   if (decision.action === "block") {
     params.message.setReject("Blocked by rule");
+    await params.store.createAuditEvent({
+      aliasAddress,
+      eventType: "blocked_by_rule",
+      metadata: {
+        matchedRuleId: decision.matchedRuleId ?? undefined,
+        ruleTrace,
+      },
+      reason: "Blocked by rule",
+      sender: incoming.from,
+      subjectPreview: incoming.subject,
+    });
 
     return {
       action: decision.action,
@@ -114,7 +162,7 @@ export async function processIncomingEmail(params: {
   let forwardedTo: string | undefined;
 
   if (decision.action === "forward") {
-    const forwardTarget = alias.forwardTo ?? params.config.defaultForwardTo;
+    const forwardTarget = decision.forwardTo ?? params.config.defaultForwardTo;
 
     if (forwardTarget) {
       await params.message.forward(forwardTarget);
@@ -123,21 +171,61 @@ export async function processIncomingEmail(params: {
   }
 
   const rawKey = buildRawKey(receivedAt);
-  const rawBytes = await readAllBytes(params.message.raw);
   await params.blobStore.put(rawKey, rawBytes, "message/rfc822");
   const messageRecord = await params.store.createMessage({
+    analysis: pendingAnalysis(params.config, content),
     aliasAddress,
     aliasId: alias.id,
-    expiresAt: computeExpiresAt(receivedAt, alias.retentionDays),
+    expiresAt: computeExpiresAt(receivedAt, decision.retentionDays),
+    tags: decision.tags,
+    ruleTrace,
     forwardedTo,
     from: incoming.from,
     matchedRuleId: decision.matchedRuleId ?? undefined,
-    preview: incoming.subject.slice(0, 180) || undefined,
+    preview:
+      (content.text || incoming.subject).replace(/\s+/g, " ").slice(0, 180) ||
+      undefined,
     rawKey,
+    verificationCodes: content.codes,
     receivedAt,
     status: messageStatusForAction(decision.action, Boolean(forwardedTo)),
     subject: incoming.subject,
   });
+  await params.store.createAuditEvent({
+    aliasAddress,
+    eventType: "received",
+    messageId: messageRecord.id,
+    metadata: decision.matchedRuleId
+      ? { matchedRuleId: decision.matchedRuleId }
+      : undefined,
+    sender: incoming.from,
+    status: messageRecord.status,
+    subjectPreview: incoming.subject,
+  });
+
+  if (forwardedTo) {
+    await params.store.createAuditEvent({
+      aliasAddress,
+      eventType: "forwarded",
+      messageId: messageRecord.id,
+      metadata: { forwardedTo },
+      sender: incoming.from,
+      status: messageRecord.status,
+      subjectPreview: incoming.subject,
+    });
+  }
+
+  if (messageRecord.analysis?.status === "pending") {
+    const enrichment = enrichMessage({
+      id: messageRecord.id,
+      content,
+      config: params.config,
+      store: params.store,
+      fetcher: params.analysisFetch,
+    });
+    if (params.waitUntil) params.waitUntil(enrichment);
+    else await enrichment;
+  }
 
   return {
     action: decision.action,

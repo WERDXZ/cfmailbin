@@ -1,8 +1,12 @@
 import type {
   Alias,
+  AuditEvent,
   CreateAliasInput,
+  CreateAuditEventInput,
   CreateMessageInput,
   CreateRuleInput,
+  DeleteMessagesResult,
+  DeliveryStatus,
   ExpiredMessagesResult,
   MessageListFilters,
   MessageRecord,
@@ -25,18 +29,25 @@ export interface BlobStore {
 }
 
 export interface AppStore {
+  reserveAnalysisCall(day: string, limit: number): Promise<boolean>;
+  claimMessageAnalysis(id: string): Promise<boolean>;
+  createAuditEvent(input: CreateAuditEventInput): Promise<AuditEvent>;
   createAlias(input: CreateAliasInput): Promise<Alias>;
   createMessage(input: CreateMessageInput): Promise<MessageRecord>;
   createRule(input: CreateRuleInput): Promise<Rule>;
   deleteExpiredMessages(before: string): Promise<ExpiredMessagesResult>;
+  deleteMessages(ids: string[]): Promise<DeleteMessagesResult>;
   ensureAliasByAddress(input: CreateAliasInput): Promise<Alias>;
   findAliasByAddress(address: string): Promise<Alias | null>;
   findAliasById(id: string): Promise<Alias | null>;
   getMessage(id: string): Promise<MessageRecord | null>;
+  getDeliveryStatus(domain?: string): Promise<DeliveryStatus>;
+  listAuditEvents(limit?: number): Promise<AuditEvent[]>;
   listAliases(): Promise<Alias[]>;
   listMessages(filters?: MessageListFilters): Promise<MessageRecord[]>;
   listRules(): Promise<Rule[]>;
   listRulesForAlias(aliasId: string): Promise<Rule[]>;
+  reorderRules(ids: string[]): Promise<Rule[]>;
   listTags(): Promise<Tag[]>;
   replaceMessageTags(messageId: string, tagNames: string[]): Promise<string[]>;
   updateAlias(id: string, patch: UpdateAliasInput): Promise<Alias | null>;
@@ -45,5 +56,4 @@ export interface AppStore {
     patch: UpdateMessageInput,
   ): Promise<MessageRecord | null>;
   updateRule(id: string, patch: UpdateRuleInput): Promise<Rule | null>;
-  validateToken(token: string): Promise<boolean>;
 }

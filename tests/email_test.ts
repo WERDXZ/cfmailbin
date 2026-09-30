@@ -97,4 +97,79 @@ Deno.test("retention cleanup removes expired messages and blobs", async () => {
   assertEquals(result.deletedCount, 1);
   assertEquals((await store.listMessages()).length, 0);
   assertEquals(await blobStore.get("messages/expired.eml"), null);
+  assertEquals(
+    (await store.findAliasById(alias.id))?.address,
+    "cleanup@example.com",
+  );
+});
+
+Deno.test("received MIME yields a decoded subject and searchable body preview", async () => {
+  const store = createMemoryStore();
+  const blobStore = createMemoryBlobStore();
+  const message = new FakeEmailMessage(
+    "security@github.example",
+    "github@example.com",
+  );
+  const raw = new TextEncoder().encode(
+    "Subject: =?UTF-8?B?VmVyaWZpY2F0aW9uIGNvZGU=?=\r\nContent-Type: text/plain\r\n\r\nYour verification code is 004218.",
+  );
+  message.headers.set("subject", "=?UTF-8?B?VmVyaWZpY2F0aW9uIGNvZGU=?=");
+  message.raw = new ReadableStream({
+    start(controller) {
+      controller.enqueue(raw);
+      controller.close();
+    },
+  });
+  message.rawSize = raw.length;
+  const result = await processIncomingEmail({
+    store,
+    blobStore,
+    message,
+    config: {
+      allowCatchAll: true,
+      appName: "cfmailbin",
+      defaultRetentionDays: 7,
+    },
+  });
+  assertEquals(result.rejected, false);
+  const stored = (await store.listMessages({ q: "004218" }))[0];
+  assertEquals(stored.subject, "Verification code");
+  assertEquals(stored.preview, "Your verification code is 004218.");
+  assertEquals(stored.verificationCodes, ["004218"]);
+  assertEquals(
+    (await store.listAliases())[0].lastReceivedAt,
+    stored.receivedAt,
+  );
+});
+
+Deno.test("code beyond the preview is available without opening the email", async () => {
+  const store = createMemoryStore();
+  const message = new FakeEmailMessage(
+    "security@example.org",
+    "new@example.com",
+  );
+  const raw = new TextEncoder().encode(
+    "Subject: Sign in\r\nContent-Type: text/plain\r\n\r\n" +
+      "Welcome to our website. ".repeat(20) +
+      "Your verification code is 000789.",
+  );
+  message.raw = new ReadableStream({
+    start(controller) {
+      controller.enqueue(raw);
+      controller.close();
+    },
+  });
+  await processIncomingEmail({
+    store,
+    blobStore: createMemoryBlobStore(),
+    message,
+    config: {
+      allowCatchAll: true,
+      appName: "cfmailbin",
+      defaultRetentionDays: 7,
+    },
+  });
+  const saved = (await store.listMessages())[0];
+  assertEquals(saved.preview?.includes("000789"), false);
+  assertEquals(saved.verificationCodes, ["000789"]);
 });

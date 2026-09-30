@@ -1,23 +1,38 @@
 {
   "nodeModulesDir": "auto",
+  "exclude": [
+    ".wrangler/",
+    "dist/",
+    "src/ui/.vite/",
+    "src/platform/worker-configuration.d.ts"
+  ],
   "tasks": {
     "dev": "deno run --watch --allow-env --allow-net src/main.ts",
     "ui:dev": "deno run -A npm:vite --config vite.config.ts",
     "ui:build": "deno run -A npm:vite build --config vite.config.ts",
     "ui:preview": "deno run -A npm:vite preview --config vite.config.ts",
-    "check": "deno check src/main.ts src/worker.ts src/ui/main.tsx tests/*.ts",
+    "wrangler": "node node_modules/wrangler/bin/wrangler.js",
+    "deploy:check": "deno task wrangler deploy --dry-run",
+    "deploy": "deno task wrangler deploy",
+    "check": "deno check src/main.ts src/ui/main.tsx tests/*.ts && deno task check:worker",
+    "check:worker": "deno check --config deno.worker.json --import-map deno.json --sloppy-imports --no-lock src/entry.ts",
+    "types": "deno task wrangler types src/platform/worker-configuration.d.ts --strict-vars false",
     "fmt": "deno fmt",
     "lint": "deno lint",
-    "test": "deno test"
+    "test": "deno test --allow-read=src/db/migrations"
   },
   "imports": {
-    "@preact/preset-vite": "npm:@preact/preset-vite@2.10.5",
+    "@preact/preset-vite": "npm:@preact/preset-vite@2.10.6",
     "@std/assert": "jsr:@std/assert@1",
-    "preact": "npm:preact@10.29.1",
-    "preact/hooks": "npm:preact@10.29.1/hooks",
-    "preact/jsx-dev-runtime": "npm:preact@10.29.1/jsx-dev-runtime",
-    "preact/jsx-runtime": "npm:preact@10.29.1/jsx-runtime",
-    "vite": "npm:vite@8.0.10"
+    "htmlparser2": "npm:htmlparser2@12.0.0",
+    "jose": "npm:jose@6.2.12",
+    "postal-mime": "npm:postal-mime@4.0.0",
+    "preact": "npm:preact@10.29.8",
+    "preact/hooks": "npm:preact@10.29.8/hooks",
+    "preact/jsx-dev-runtime": "npm:preact@10.29.8/jsx-dev-runtime",
+    "preact/jsx-runtime": "npm:preact@10.29.8/jsx-runtime",
+    "vite": "npm:vite@8.3.1",
+    "wrangler": "npm:wrangler@4.144.0"
   },
   "compilerOptions": {
     "jsx": "react-jsx",

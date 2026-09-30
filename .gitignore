@@ -1,2 +1,8 @@
 dist/
 node_modules/
+.wrangler/
+.vite/
+.env
+.env.*
+.dev.vars
+.dev.vars.*

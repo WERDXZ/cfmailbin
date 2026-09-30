@@ -1,12 +1,22 @@
 export type RuleAction = "keep" | "forward" | "trash" | "block";
 export type RuleField = "alias" | "from" | "subject";
 export type MessageStatus = "inbox" | "forwarded" | "trashed" | "blocked";
+export type AuditEventType =
+  | "received"
+  | "auto_alias_created"
+  | "rejected_unknown"
+  | "rejected_disabled"
+  | "blocked_by_rule"
+  | "forwarded"
+  | "expired_deleted"
+  | "manual_deleted";
 
 export interface Alias {
   id: string;
   address: string;
   description?: string;
   createdAt: string;
+  lastReceivedAt?: string;
   defaultAction: RuleAction;
   enabled: boolean;
   forwardTo?: string;
@@ -35,6 +45,9 @@ export interface UpdateAliasInput {
 }
 
 export interface IncomingMessage {
+  body?: string;
+  hasCode?: boolean;
+  contentComplete?: boolean;
   alias: string;
   from: string;
   receivedAt: string;
@@ -43,6 +56,8 @@ export interface IncomingMessage {
 }
 
 export interface MessageRecord {
+  analysis?: MessageAnalysis;
+  ruleTrace?: RuleTrace[];
   id: string;
   aliasId: string;
   aliasAddress: string;
@@ -53,13 +68,27 @@ export interface MessageRecord {
   matchedRuleId?: string;
   subject: string;
   preview?: string;
+  verificationCodes?: string[];
   receivedAt: string;
   rawKey?: string;
   status: MessageStatus;
   tags: string[];
 }
 
+export interface MessageContent {
+  /** Sanitized document; must only be rendered in a sandboxed, opaque-origin iframe. */
+  html?: string;
+  subject: string;
+  text: string;
+  codes: string[];
+  links: { url: string; label: string }[];
+  truncated: boolean;
+  warning?: "too_large" | "parse_failed";
+}
+
 export interface CreateMessageInput {
+  analysis?: MessageAnalysis;
+  ruleTrace?: RuleTrace[];
   aliasAddress: string;
   aliasId: string;
   expiresAt: string;
@@ -67,6 +96,7 @@ export interface CreateMessageInput {
   forwardedTo?: string;
   matchedRuleId?: string;
   preview?: string;
+  verificationCodes?: string[];
   rawKey?: string;
   receivedAt: string;
   status: MessageStatus;
@@ -75,7 +105,14 @@ export interface CreateMessageInput {
 }
 
 export interface UpdateMessageInput {
+  analysis?: MessageAnalysis;
   status?: MessageStatus;
+  verificationCodes?: string[];
+}
+
+export interface DeliveryStatus {
+  lastReceived?: AuditEvent;
+  lastRejected?: AuditEvent;
 }
 
 export interface MessageListFilters {
@@ -85,7 +122,47 @@ export interface MessageListFilters {
   status?: MessageStatus;
 }
 
+export type ConditionField = RuleField | "fromDomain" | "body";
+export type TextOperator =
+  | "equals"
+  | "contains"
+  | "startsWith"
+  | "endsWith"
+  | "glob";
+export type RuleCondition =
+  | { all: RuleCondition[] }
+  | { any: RuleCondition[] }
+  | { not: RuleCondition }
+  | { field: "hasCode"; value: boolean }
+  | { field: ConditionField; operator: TextOperator; value: string };
+
+export interface RuleActions {
+  delivery?: RuleAction;
+  forwardTo?: string;
+  tags?: string[];
+  retentionDays?: number;
+}
+
+export interface ConditionTrace {
+  label: string;
+  result: boolean | null;
+  children?: ConditionTrace[];
+}
+
+export interface RuleTrace {
+  ruleId: string;
+  name: string;
+  condition: ConditionTrace;
+  actions: RuleActions;
+  stopped: boolean;
+}
+
 export interface Rule {
+  name?: string;
+  condition?: RuleCondition;
+  actions?: RuleActions;
+  priority?: number;
+  stopProcessing?: boolean;
   action: RuleAction;
   aliasId: string | null;
   createdAt: string;
@@ -97,14 +174,11 @@ export interface Rule {
 }
 
 export interface CreateRuleInput {
-  action: RuleAction;
-  aliasId?: string | null;
-  enabled?: boolean;
-  field: RuleField;
-  pattern: string;
-}
-
-export interface UpdateRuleInput {
+  name?: string;
+  condition?: RuleCondition;
+  actions?: RuleActions;
+  priority?: number;
+  stopProcessing?: boolean;
   action?: RuleAction;
   aliasId?: string | null;
   enabled?: boolean;
@@ -112,18 +186,71 @@ export interface UpdateRuleInput {
   pattern?: string;
 }
 
+export type UpdateRuleInput = Partial<CreateRuleInput>;
+
 export interface Tag {
   createdAt: string;
   id: string;
   name: string;
 }
 
+export interface AuditEvent {
+  aliasAddress?: string;
+  createdAt: string;
+  eventType: AuditEventType;
+  id: string;
+  messageId?: string;
+  metadata?: Record<string, unknown>;
+  reason?: string;
+  sender?: string;
+  status?: MessageStatus;
+  subjectPreview?: string;
+}
+
+export interface CreateAuditEventInput {
+  aliasAddress?: string;
+  eventType: AuditEventType;
+  messageId?: string;
+  metadata?: Record<string, unknown>;
+  reason?: string;
+  sender?: string;
+  status?: MessageStatus;
+  subjectPreview?: string;
+}
+
 export interface RuleDecision {
+  forwardTo?: string;
+  retentionDays: number;
+  tags: string[];
+  trace: RuleTrace[];
   action: RuleAction;
   matchedRuleId: string | null;
 }
 
+export interface RulePreview {
+  examined: number;
+  matched: number;
+  rows: {
+    messageId: string;
+    subject: string;
+    aliasAddress: string;
+    receivedAt: string;
+    draftResult: boolean | null;
+    draftReached: boolean;
+    draftCondition: ConditionTrace;
+    decision: RuleDecision;
+  }[];
+}
+
 export interface ExpiredMessagesResult {
   count: number;
+  messages: MessageRecord[];
   rawKeys: string[];
 }
+
+export interface DeleteMessagesResult {
+  deleted: MessageRecord[];
+  missing: string[];
+  rawKeys: string[];
+}
+import type { MessageAnalysis } from "./analysis.ts";

@@ -1,25 +1,27 @@
 import type {
   Alias,
+  AuditEvent,
+  BatchDeleteResponse,
   BootstrapResponse,
   CreateAliasInput,
   CreateRuleInput,
+  InboxResponse,
+  MessageContent,
   MessageFilters,
   MessageRecord,
   MessageStatus,
   Rule,
+  RulePreview,
+  SessionResponse,
   Tag,
+  UpdateRuleInput,
 } from "./types.ts";
+import type { RuntimeSettings, SettingsResponse } from "../settings.ts";
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
   }
-}
-
-function headersWithAuth(token: string, headers?: HeadersInit): Headers {
-  const next = new Headers(headers);
-  next.set("authorization", `Bearer ${token}`);
-  return next;
 }
 
 async function parseError(response: Response): Promise<never> {
@@ -35,38 +37,35 @@ async function parseError(response: Response): Promise<never> {
   throw new ApiError(response.status, response.statusText || "Request failed");
 }
 
-async function requestJson<T>(
-  token: string,
-  path: string,
-  init?: RequestInit,
-): Promise<T> {
+async function request(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  headers.set("x-cfmailbin-request", "1");
   const response = await fetch(path, {
     ...init,
-    headers: headersWithAuth(token, init?.headers),
+    credentials: "same-origin",
+    redirect: "manual",
+    headers,
   });
 
+  if (
+    response.type === "opaqueredirect" ||
+    (response.status >= 300 && response.status < 400) ||
+    (response.ok && response.headers.get("content-type")?.includes("text/html"))
+  ) {
+    throw new ApiError(401, "Please sign in again");
+  }
   if (!response.ok) {
     return parseError(response);
   }
-
-  return await response.json() as T;
+  return response;
 }
 
-async function requestBlob(
-  token: string,
-  path: string,
-  init?: RequestInit,
-): Promise<Blob> {
-  const response = await fetch(path, {
-    ...init,
-    headers: headersWithAuth(token, init?.headers),
-  });
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return await (await request(path, init)).json() as T;
+}
 
-  if (!response.ok) {
-    return parseError(response);
-  }
-
-  return await response.blob();
+async function requestBlob(path: string): Promise<Blob> {
+  return await (await request(path)).blob();
 }
 
 function createBody(body: unknown): { body: string; headers: Headers } {
@@ -99,56 +98,119 @@ function buildMessageQuery(filters: MessageFilters): string {
 }
 
 export const api = {
-  async createAlias(token: string, input: CreateAliasInput): Promise<Alias> {
+  getSettings(signal?: AbortSignal): Promise<SettingsResponse> {
+    return requestJson("/api/settings", { signal });
+  },
+  saveSettings(settings: RuntimeSettings): Promise<SettingsResponse> {
+    return requestJson("/api/settings", {
+      method: "PUT",
+      ...createBody(settings),
+    });
+  },
+  async getInbox(
+    filters: MessageFilters,
+    signal?: AbortSignal,
+  ): Promise<InboxResponse> {
+    return await requestJson(`/api/inbox${buildMessageQuery(filters)}`, {
+      signal,
+    });
+  },
+  async generateAlias(label: string, domain: string): Promise<Alias> {
+    return await requestJson("/api/aliases/generate", {
+      method: "POST",
+      ...createBody({ label, domain }),
+    });
+  },
+
+  async getMessageContent(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<MessageContent> {
+    return await requestJson(`/api/messages/${id}/content`, { signal });
+  },
+  async createAlias(input: CreateAliasInput): Promise<Alias> {
     const body = createBody(input);
 
-    return await requestJson(token, "/api/aliases", {
+    return await requestJson("/api/aliases", {
       body: body.body,
       headers: body.headers,
       method: "POST",
     });
   },
 
-  async createRule(token: string, input: CreateRuleInput): Promise<Rule> {
+  async previewRule(
+    draft: CreateRuleInput,
+    ruleId?: string,
+    signal?: AbortSignal,
+  ): Promise<RulePreview> {
+    return await requestJson("/api/rules/preview", {
+      method: "POST",
+      ...createBody({ draft, ruleId }),
+      signal,
+    });
+  },
+  async reorderRules(ids: string[]): Promise<Rule[]> {
+    return await requestJson("/api/rules/reorder", {
+      method: "POST",
+      ...createBody({ ids }),
+    });
+  },
+
+  async createRule(input: CreateRuleInput): Promise<Rule> {
     const body = createBody(input);
 
-    return await requestJson(token, "/api/rules", {
+    return await requestJson("/api/rules", {
       body: body.body,
       headers: body.headers,
       method: "POST",
     });
   },
 
-  async downloadRawMessage(token: string, messageId: string): Promise<Blob> {
-    return await requestBlob(token, `/api/messages/${messageId}/raw`);
+  async downloadRawMessage(messageId: string): Promise<Blob> {
+    return await requestBlob(`/api/messages/${messageId}/raw`);
   },
 
-  async getBootstrap(token: string): Promise<BootstrapResponse> {
-    return await requestJson(token, "/api/bootstrap");
+  async deleteMessages(
+    ids: string[],
+  ): Promise<BatchDeleteResponse> {
+    const body = createBody({ ids });
+
+    return await requestJson("/api/messages/batch-delete", {
+      body: body.body,
+      headers: body.headers,
+      method: "POST",
+    });
+  },
+
+  async getBootstrap(signal?: AbortSignal): Promise<BootstrapResponse> {
+    return await requestJson("/api/bootstrap", { signal });
   },
 
   async listMessages(
-    token: string,
     filters: MessageFilters,
+    signal?: AbortSignal,
   ): Promise<MessageRecord[]> {
     return await requestJson(
-      token,
       `/api/messages${buildMessageQuery(filters)}`,
+      { signal },
     );
   },
 
-  async listTags(token: string): Promise<Tag[]> {
-    return await requestJson(token, "/api/tags");
+  async listTags(): Promise<Tag[]> {
+    return await requestJson("/api/tags");
+  },
+
+  async listAuditEvents(): Promise<AuditEvent[]> {
+    return await requestJson("/api/audit-events?limit=100");
   },
 
   async patchAlias(
-    token: string,
     aliasId: string,
-    patch: Partial<Pick<Alias, "enabled">>,
+    patch: Partial<Pick<Alias, "enabled" | "description" | "retentionDays">>,
   ): Promise<Alias> {
     const body = createBody(patch);
 
-    return await requestJson(token, `/api/aliases/${aliasId}`, {
+    return await requestJson(`/api/aliases/${aliasId}`, {
       body: body.body,
       headers: body.headers,
       method: "PATCH",
@@ -156,13 +218,12 @@ export const api = {
   },
 
   async patchMessage(
-    token: string,
     messageId: string,
     patch: { status: MessageStatus },
   ): Promise<MessageRecord> {
     const body = createBody(patch);
 
-    return await requestJson(token, `/api/messages/${messageId}`, {
+    return await requestJson(`/api/messages/${messageId}`, {
       body: body.body,
       headers: body.headers,
       method: "PATCH",
@@ -170,13 +231,12 @@ export const api = {
   },
 
   async patchRule(
-    token: string,
     ruleId: string,
-    patch: Partial<Pick<Rule, "enabled">>,
+    patch: UpdateRuleInput,
   ): Promise<Rule> {
     const body = createBody(patch);
 
-    return await requestJson(token, `/api/rules/${ruleId}`, {
+    return await requestJson(`/api/rules/${ruleId}`, {
       body: body.body,
       headers: body.headers,
       method: "PATCH",
@@ -184,20 +244,19 @@ export const api = {
   },
 
   async replaceMessageTags(
-    token: string,
     messageId: string,
     tags: string[],
   ): Promise<{ messageId: string; tags: string[] }> {
     const body = createBody({ tags });
 
-    return await requestJson(token, `/api/messages/${messageId}/tags`, {
+    return await requestJson(`/api/messages/${messageId}/tags`, {
       body: body.body,
       headers: body.headers,
       method: "PUT",
     });
   },
 
-  async validateSession(token: string): Promise<{ ok: boolean }> {
-    return await requestJson(token, "/api/session");
+  async validateSession(): Promise<SessionResponse> {
+    return await requestJson("/api/session");
   },
 };

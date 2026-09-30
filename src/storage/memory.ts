@@ -1,5 +1,16 @@
-import type { Alias, MessageRecord, Rule, Tag } from "../domain/models.ts";
-import { normalizeAddress } from "../domain/rules.ts";
+import type {
+  Alias,
+  AuditEvent,
+  MessageRecord,
+  Rule,
+  Tag,
+} from "../domain/models.ts";
+import {
+  compareRules,
+  makeRule,
+  normalizeAddress,
+  patchRule,
+} from "../domain/rules.ts";
 import type { AppStore, BlobStore, StoredBlob } from "./types.ts";
 
 function clone<T>(value: T): T {
@@ -90,22 +101,27 @@ export function createMemoryBlobStore(): BlobStore {
 
 export function createMemoryStore(seed?: {
   aliases?: Alias[];
+  auditEvents?: AuditEvent[];
   messages?: MessageRecord[];
   rules?: Rule[];
   tags?: Tag[];
-  tokens?: string[];
 }): AppStore {
   const aliases = new Map<string, Alias>();
+  const auditEvents = new Map<string, AuditEvent>();
   const rules = new Map<string, Rule>();
   const messages = new Map<string, MessageRecord>();
+  const analysisCalls = new Map<string, number>();
   const tags = new Map<string, Tag>();
   const tagIdsByName = new Map<string, string>();
   const messageTags = new Map<string, Set<string>>();
-  const tokens = new Set(seed?.tokens ?? []);
 
   for (const alias of seed?.aliases ?? []) {
     ensureTagRecords(tags, tagIdsByName, alias.tags, alias.createdAt);
     aliases.set(alias.id, clone(alias));
+  }
+
+  for (const event of seed?.auditEvents ?? []) {
+    auditEvents.set(event.id, clone(event));
   }
 
   for (const rule of seed?.rules ?? []) {
@@ -163,21 +179,30 @@ export function createMemoryStore(seed?: {
   function sortedRulesForAlias(aliasId: string): Rule[] {
     return [...rules.values()]
       .filter((rule) => rule.aliasId === null || rule.aliasId === aliasId)
-      .sort((left, right) => {
-        if (left.aliasId === null && right.aliasId !== null) {
-          return 1;
-        }
-
-        if (left.aliasId !== null && right.aliasId === null) {
-          return -1;
-        }
-
-        return left.createdAt.localeCompare(right.createdAt);
-      })
+      .sort(compareRules)
       .map((rule) => clone(rule));
   }
 
   return {
+    createAuditEvent(input) {
+      const event: AuditEvent = {
+        aliasAddress: input.aliasAddress
+          ? normalizeAddress(input.aliasAddress)
+          : undefined,
+        createdAt: new Date().toISOString(),
+        eventType: input.eventType,
+        id: crypto.randomUUID(),
+        messageId: input.messageId,
+        metadata: input.metadata ? clone(input.metadata) : undefined,
+        reason: input.reason,
+        sender: input.sender,
+        status: input.status,
+        subjectPreview: input.subjectPreview?.slice(0, 180),
+      };
+      auditEvents.set(event.id, event);
+      return Promise.resolve(clone(event));
+    },
+
     createAlias(input) {
       const now = new Date().toISOString();
       const alias: Alias = {
@@ -200,6 +225,7 @@ export function createMemoryStore(seed?: {
     async createMessage(input) {
       const now = new Date().toISOString();
       const message: MessageRecord = {
+        analysis: input.analysis ? clone(input.analysis) : undefined,
         aliasAddress: normalizeAddress(input.aliasAddress),
         aliasId: input.aliasId,
         createdAt: now,
@@ -209,6 +235,8 @@ export function createMemoryStore(seed?: {
         id: crypto.randomUUID(),
         matchedRuleId: input.matchedRuleId,
         preview: input.preview,
+        verificationCodes: input.verificationCodes?.slice(),
+        ruleTrace: input.ruleTrace ? clone(input.ruleTrace) : undefined,
         rawKey: input.rawKey,
         receivedAt: input.receivedAt,
         status: input.status,
@@ -217,6 +245,13 @@ export function createMemoryStore(seed?: {
       };
 
       messages.set(message.id, message);
+      const alias = aliases.get(message.aliasId);
+      if (
+        alias &&
+        (!alias.lastReceivedAt || alias.lastReceivedAt < message.receivedAt)
+      ) {
+        alias.lastReceivedAt = message.receivedAt;
+      }
 
       if (input.tags && input.tags.length > 0) {
         await this.replaceMessageTags(message.id, input.tags);
@@ -226,23 +261,17 @@ export function createMemoryStore(seed?: {
     },
 
     createRule(input) {
-      const now = new Date().toISOString();
-      const rule: Rule = {
-        action: input.action,
-        aliasId: input.aliasId ?? null,
-        createdAt: now,
-        enabled: input.enabled ?? true,
-        field: input.field,
-        id: crypto.randomUUID(),
-        pattern: input.pattern.trim(),
-        updatedAt: now,
-      };
+      const priority =
+        Math.max(0, ...[...rules.values()].map((rule) => rule.priority ?? 0)) +
+        10;
+      const rule = makeRule(input, priority);
       rules.set(rule.id, rule);
       return Promise.resolve(clone(rule));
     },
 
     deleteExpiredMessages(before) {
       const rawKeys: string[] = [];
+      const deleted: MessageRecord[] = [];
       let count = 0;
 
       for (const [messageId, message] of messages.entries()) {
@@ -254,12 +283,42 @@ export function createMemoryStore(seed?: {
           rawKeys.push(message.rawKey);
         }
 
+        deleted.push(materializeMessage(message));
         messages.delete(messageId);
         messageTags.delete(messageId);
         count += 1;
       }
 
-      return Promise.resolve({ count, rawKeys });
+      return Promise.resolve({ count, messages: deleted, rawKeys });
+    },
+
+    deleteMessages(ids) {
+      const uniqueIds = [
+        ...new Set(ids.map((id) => id.trim()).filter(Boolean)),
+      ];
+      const deleted: MessageRecord[] = [];
+      const missing: string[] = [];
+      const rawKeys: string[] = [];
+
+      for (const messageId of uniqueIds) {
+        const message = messages.get(messageId);
+
+        if (!message) {
+          missing.push(messageId);
+          continue;
+        }
+
+        deleted.push(materializeMessage(message));
+
+        if (message.rawKey) {
+          rawKeys.push(message.rawKey);
+        }
+
+        messages.delete(messageId);
+        messageTags.delete(messageId);
+      }
+
+      return Promise.resolve({ deleted, missing, rawKeys });
     },
 
     async ensureAliasByAddress(input) {
@@ -289,10 +348,44 @@ export function createMemoryStore(seed?: {
       return Promise.resolve(message ? materializeMessage(message) : null);
     },
 
+    getDeliveryStatus(domain) {
+      const events = [...auditEvents.values()]
+        .filter((event) =>
+          !domain || event.aliasAddress?.split("@")[1] === domain
+        )
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      const lastReceived = events.find((event) =>
+        event.eventType === "received"
+      );
+      const lastRejected = events.find((event) =>
+        ["rejected_unknown", "rejected_disabled", "blocked_by_rule"].includes(
+          event.eventType,
+        )
+      );
+      return Promise.resolve({
+        ...(lastReceived ? { lastReceived: clone(lastReceived) } : {}),
+        ...(lastRejected ? { lastRejected: clone(lastRejected) } : {}),
+      });
+    },
+
+    listAuditEvents(limit = 100) {
+      const cappedLimit = Math.max(1, Math.min(limit, 500));
+      return Promise.resolve(
+        [...auditEvents.values()]
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+          .slice(0, cappedLimit)
+          .map((event) => clone(event)),
+      );
+    },
+
     listAliases() {
       return Promise.resolve(
         [...aliases.values()]
-          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+          .sort((left, right) =>
+            (right.lastReceivedAt ?? "").localeCompare(
+              left.lastReceivedAt ?? "",
+            ) || right.createdAt.localeCompare(left.createdAt)
+          )
           .map((alias) => clone(alias)),
       );
     },
@@ -317,7 +410,9 @@ export function createMemoryStore(seed?: {
             }
 
             const haystack =
-              `${message.aliasAddress} ${message.from} ${message.subject}`
+              `${message.aliasAddress} ${message.from} ${message.subject} ${
+                message.preview ?? ""
+              } ${aliases.get(message.aliasId)?.description ?? ""}`
                 .toLowerCase();
             return haystack.includes(query);
           })
@@ -331,10 +426,18 @@ export function createMemoryStore(seed?: {
 
     listRules() {
       return Promise.resolve(
-        [...rules.values()]
-          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-          .map((rule) => clone(rule)),
+        [...rules.values()].sort(compareRules).map((rule) => clone(rule)),
       );
+    },
+    reorderRules(ids) {
+      ids.forEach((id, index) => {
+        const rule = rules.get(id);
+        if (rule) {
+          rule.priority = (index + 1) * 10;
+          rule.updatedAt = new Date().toISOString();
+        }
+      });
+      return this.listRules();
     },
 
     listRulesForAlias(aliasId) {
@@ -426,11 +529,34 @@ export function createMemoryStore(seed?: {
         return Promise.resolve(null);
       }
 
+      if (patch.analysis !== undefined) {
+        message.analysis = clone(patch.analysis);
+      }
+
       if (patch.status !== undefined) {
         message.status = patch.status;
       }
+      if (patch.verificationCodes !== undefined) {
+        message.verificationCodes = patch.verificationCodes.slice();
+      }
 
       return Promise.resolve(materializeMessage(message));
+    },
+
+    reserveAnalysisCall(day, limit) {
+      const count = analysisCalls.get(day) ?? 0;
+      if (count >= limit) return Promise.resolve(false);
+      analysisCalls.set(day, count + 1);
+      return Promise.resolve(true);
+    },
+
+    claimMessageAnalysis(id) {
+      const message = messages.get(id);
+      if (message?.analysis?.status !== "pending") {
+        return Promise.resolve(false);
+      }
+      message.analysis.status = "running";
+      return Promise.resolve(true);
     },
 
     updateRule(id, patch) {
@@ -440,32 +566,9 @@ export function createMemoryStore(seed?: {
         return Promise.resolve(null);
       }
 
-      if (patch.action !== undefined) {
-        rule.action = patch.action;
-      }
-
-      if (patch.aliasId !== undefined) {
-        rule.aliasId = patch.aliasId;
-      }
-
-      if (patch.enabled !== undefined) {
-        rule.enabled = patch.enabled;
-      }
-
-      if (patch.field !== undefined) {
-        rule.field = patch.field;
-      }
-
-      if (patch.pattern !== undefined) {
-        rule.pattern = patch.pattern.trim();
-      }
-
-      rule.updatedAt = new Date().toISOString();
-      return Promise.resolve(clone(rule));
-    },
-
-    validateToken(token) {
-      return Promise.resolve(tokens.has(token));
+      const next = patchRule(rule, patch);
+      rules.set(id, clone(next));
+      return Promise.resolve(clone(next));
     },
   };
 }

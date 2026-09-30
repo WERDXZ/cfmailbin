@@ -1,8 +1,29 @@
 export type RuleAction = "keep" | "forward" | "trash" | "block";
+export type { MessageContent } from "../domain/models.ts";
+import type { DeliveryStatus, Rule, RuleTrace } from "../domain/models.ts";
+import type { MessageAnalysis } from "../domain/analysis.ts";
+export type {
+  ConditionTrace,
+  CreateRuleInput,
+  DeliveryStatus,
+  Rule,
+  RuleActions,
+  RuleCondition,
+  RulePreview,
+  RuleTrace,
+  UpdateRuleInput,
+} from "../domain/models.ts";
 export type RuleField = "alias" | "from" | "subject";
 export type MessageStatus = "inbox" | "forwarded" | "trashed" | "blocked";
 
+export interface SessionResponse {
+  ok: true;
+  email: string;
+  mode: "access" | "development";
+}
+
 export interface Alias {
+  lastReceivedAt?: string;
   address: string;
   createdAt: string;
   defaultAction: RuleAction;
@@ -15,18 +36,10 @@ export interface Alias {
   updatedAt: string;
 }
 
-export interface Rule {
-  action: RuleAction;
-  aliasId: string | null;
-  createdAt: string;
-  enabled: boolean;
-  field: RuleField;
-  id: string;
-  pattern: string;
-  updatedAt: string;
-}
-
 export interface MessageRecord {
+  analysis?: MessageAnalysis;
+  ruleTrace?: RuleTrace[];
+  verificationCodes?: string[];
   aliasAddress: string;
   aliasId: string;
   createdAt: string;
@@ -49,13 +62,43 @@ export interface Tag {
   name: string;
 }
 
+export type AuditEventType =
+  | "received"
+  | "auto_alias_created"
+  | "rejected_unknown"
+  | "rejected_disabled"
+  | "blocked_by_rule"
+  | "forwarded"
+  | "expired_deleted"
+  | "manual_deleted";
+
+export interface AuditEvent {
+  aliasAddress?: string;
+  createdAt: string;
+  eventType: AuditEventType;
+  id: string;
+  messageId?: string;
+  metadata?: Record<string, unknown>;
+  reason?: string;
+  sender?: string;
+  status?: MessageStatus;
+  subjectPreview?: string;
+}
+
 export interface BootstrapResponse {
   aliases: Alias[];
   config: {
+    emailDomain?: string;
     allowCatchAll: boolean;
     autoCreateAliasTag?: string;
     defaultRetentionDays: number;
     forwardingConfigured: boolean;
+    analysis?: {
+      enabled: boolean;
+      configured: boolean;
+      model: string;
+      dailyLimit: number;
+    };
   };
   rules: Rule[];
   tags: Tag[];
@@ -67,6 +110,18 @@ export interface MessageFilters {
   status?: MessageStatus;
 }
 
+export interface InboxResponse {
+  messages: MessageRecord[];
+  aliases: Alias[];
+  delivery: DeliveryStatus;
+}
+
+export interface BatchDeleteResponse {
+  deleted: number;
+  missing: string[];
+  rawDeleted: number;
+}
+
 export interface CreateAliasInput {
   address: string;
   defaultAction: RuleAction;
@@ -75,12 +130,4 @@ export interface CreateAliasInput {
   forwardTo?: string;
   retentionDays: number;
   tags?: string[];
-}
-
-export interface CreateRuleInput {
-  action: RuleAction;
-  aliasId: string | null;
-  enabled?: boolean;
-  field: RuleField;
-  pattern: string;
 }

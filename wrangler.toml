@@ -1,5 +1,5 @@
 name = "cfmailbin"
-main = "src/worker.ts"
+main = "src/entry.ts"
 compatibility_date = "2026-04-24"
 
 [build]
@@ -13,12 +13,31 @@ run_worker_first = ["/api/*", "/health"]
 [observability]
 enabled = true
 
+[observability.traces]
+enabled = true
+
 [vars]
+# Receiving/AI preferences are initial defaults. Saved /settings preferences in
+# the SETTINGS KV namespace take precedence; identity and secrets stay here.
 CFMAILBIN_APP_NAME = "cfmailbin"
-CFMAILBIN_ALLOW_CATCH_ALL = "false"
+# Optional default for generated registration addresses. Configure Email Routing separately.
+CFMAILBIN_EMAIL_DOMAIN = "werdxz.com"
+# Required for dashboard/API access; see docs/access.md.
+CFMAILBIN_OWNER_EMAIL = "werdxz@werdxz.info"
+CFMAILBIN_ACCESS_TEAM_DOMAIN = "werdxz.cloudflareaccess.com"
+CFMAILBIN_ACCESS_AUD = "508a121514fa195e5d8f4ea1f0d0fc0493684f3be95c49e6355b66979039458e"
+CFMAILBIN_ALLOW_CATCH_ALL = "true"
 # CFMAILBIN_AUTO_CREATE_ALIAS_TAG = "auto-created"
 CFMAILBIN_DEFAULT_RETENTION_DAYS = "7"
 # CFMAILBIN_FORWARD_TO = "owner@example.com"
+# Optional AI fallback via AI Gateway. Store the model key in Gateway BYOK (default)
+# or a Worker secret; CF_AIG_TOKEN must be a Worker secret, never in this file.
+# See docs/email-analysis.md. Apply migration 0005 before deploying.
+CFMAILBIN_AI_ENABLED = "true"
+CFMAILBIN_AI_PROVIDER = "deepseek" # or "openai" for gpt-5.6-luna
+CFMAILBIN_AI_DAILY_LIMIT = "100"
+CFMAILBIN_AI_GATEWAY_ACCOUNT_ID = "00361a294a6d1e552bf0d22ab3755ca5"
+CFMAILBIN_AI_GATEWAY_ID = "cfmailbin"
 
 [triggers]
 crons = ["0 * * * *"]
@@ -26,10 +45,22 @@ crons = ["0 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "cfmailbin"
-database_id = "replace-with-d1-database-id"
+database_id = "c6301cd6-6a1c-4df0-b716-68c73cdc5b44"
 migrations_dir = "src/db/migrations"
 
 [[r2_buckets]]
 binding = "RAW_EMAILS"
 bucket_name = "cfmailbin-raw-emails"
 preview_bucket_name = "cfmailbin-raw-emails-preview"
+
+[[durable_objects.bindings]]
+name = "INBOX_EVENTS"
+class_name = "InboxEventsObject"
+
+[[migrations]]
+tag = "inbox-events-v1"
+new_sqlite_classes = ["InboxEventsObject"]
+
+[[kv_namespaces]]
+binding = "SETTINGS"
+id = "16be0333bef7485c8c15f57a40e0cdaa"

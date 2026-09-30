@@ -1,13 +1,32 @@
 import { handleRequest } from "./app.ts";
 import { readConfig } from "./config.ts";
 import { createMemoryBlobStore, createMemoryStore } from "./storage/memory.ts";
+import { configWithSettings, createMemorySettingsStore } from "./settings.ts";
+import { InboxEvents } from "./realtime.ts";
 
-const config = readConfig();
-const store = createMemoryStore({
-  tokens: [Deno.env.get("CFMAILBIN_DEV_TOKEN") ?? "dev-token"],
-});
+const config = readConfig(Deno.env.toObject());
+const store = createMemoryStore();
 const blobStore = createMemoryBlobStore();
+const settings = createMemorySettingsStore();
+const events = new InboxEvents();
+const env = Deno.env.toObject();
 
 if (import.meta.main) {
-  Deno.serve((request) => handleRequest(request, { blobStore, config, store }));
+  Deno.serve({ hostname: "127.0.0.1", port: 8000 }, (request) => {
+    if (!["localhost", "127.0.0.1"].includes(new URL(request.url).hostname)) {
+      return new Response("Invalid development host", { status: 403 });
+    }
+    return handleRequest(request, {
+      blobStore,
+      config,
+      store,
+      settings,
+      events,
+      loadConfig: async () => configWithSettings(env, await settings.get()),
+      developmentSession: {
+        email: config.ownerEmail ?? "developer@localhost",
+        mode: "development",
+      },
+    });
+  });
 }

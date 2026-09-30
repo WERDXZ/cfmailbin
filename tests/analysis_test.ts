@@ -218,7 +218,18 @@ Deno.test("negative results on partial text remain unknown; payload size is boun
 });
 
 Deno.test("Gateway errors never retry, fall back to direct calls, or expose response bodies", async () => {
-  for (const status of [401, 402, 429, 503]) {
+  for (
+    const [status, reason] of [
+      [401, "authentication"],
+      [403, "authentication"],
+      [402, "billing"],
+      [429, "rate_limit"],
+      [400, "invalid_request"],
+      [404, "invalid_request"],
+      [503, "service_error"],
+      [504, "timeout"],
+    ] as const
+  ) {
     let calls = 0;
     const error = await assertRejects(() =>
       analyzeEmail(
@@ -235,6 +246,45 @@ Deno.test("Gateway errors never retry, fall back to direct calls, or expose resp
     );
     assertEquals(calls, 1);
     assert(!String(error).includes("sensitive-upstream-error"));
+    const failure = error as Error & { reason?: string; httpStatus?: number };
+    assertEquals(failure.reason, reason);
+    assertEquals(failure.httpStatus, status);
+  }
+});
+
+Deno.test("analysis distinguishes timeout, network failures and invalid JSON without leaking errors", async () => {
+  const cases = [
+    {
+      reason: "timeout",
+      fetcher: (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal!.addEventListener(
+            "abort",
+            () => reject(new Error("private timeout")),
+            { once: true },
+          );
+        }),
+    },
+    {
+      reason: "network_error",
+      fetcher: () => Promise.reject(new Error("private network detail")),
+    },
+    {
+      reason: "invalid_response",
+      fetcher: () => Promise.resolve(new Response("private malformed JSON")),
+    },
+    {
+      reason: "invalid_response",
+      fetcher: () => modelResponse({ choices: [] }),
+    },
+  ];
+  for (const { reason, fetcher } of cases) {
+    const error = await assertRejects(() =>
+      analyzeEmail({ gateway, provider: "deepseek" }, content, fetcher, 5)
+    );
+    assertEquals((error as Error & { reason?: string }).reason, reason);
+    assert(!String(error).includes("private"));
+    assert(!JSON.stringify(error).includes("private"));
   }
 });
 

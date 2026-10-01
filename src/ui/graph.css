@@ -1,0 +1,458 @@
+.settings-page.settings-page--graph {
+  max-width: none;
+}
+.graph-editor {
+  min-width: 0;
+}
+.graph-editor fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.graph-toolbar,
+.graph-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.graph-toolbar {
+  justify-content: space-between;
+  margin: 16px 0;
+}
+.graph-editor .graph-toggle {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+}
+.graph-editor .graph-toggle input {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+}
+.graph-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 20px;
+  align-items: start;
+}
+.graph-workspace {
+  min-width: 0;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.graph-canvas-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.graph-editor .graph-canvas-tools label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.graph-canvas-tools select {
+  width: auto;
+  min-height: 30px;
+  padding: 3px 8px;
+}
+.graph-viewport {
+  height: 620px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background-image: radial-gradient(var(--divider) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+.graph-stage {
+  position: relative;
+  transform-origin: top left;
+}
+.graph-edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: var(--muted);
+}
+.graph-edges g > path {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+.graph-edges g.is-selected > path {
+  stroke: var(--accent);
+}
+.graph-edges text {
+  fill: var(--muted);
+  font-size: 12px;
+}
+.graph-node {
+  position: absolute;
+  width: 220px;
+  height: 104px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  text-align: left;
+  touch-action: none;
+  cursor: grab;
+  box-shadow: 0 2px 5px #0001;
+}
+.graph-node:active {
+  cursor: grabbing;
+}
+.graph-node.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  background: var(--accent-soft);
+}
+.graph-node strong,
+.graph-node-description {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-node-kind {
+  color: var(--accent);
+  font-size: 11px;
+}
+.graph-node-description {
+  color: var(--muted);
+  font-size: 12px;
+}
+.graph-inspector {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  max-height: 675px;
+  overflow: auto;
+  padding: 2px 8px 8px 0;
+}
+.graph-inspector-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.graph-inspector-heading h3 {
+  margin: 0;
+}
+.graph-inspector-heading code {
+  color: var(--muted);
+  font-size: 12px;
+}
+.graph-inspector label,
+.graph-trial label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+}
+.graph-inspector input,
+.graph-inspector select,
+.graph-inspector textarea,
+.graph-trial input,
+.graph-trial textarea,
+.graph-trial select {
+  width: 100%;
+  min-width: 0;
+}
+.graph-inspector textarea,
+.graph-trial textarea,
+.policy-editor textarea {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  resize: vertical;
+  padding: 10px;
+  line-height: 1.6;
+}
+.policy-editor textarea {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  line-height: 1.6;
+}
+.policy-editor .graph-condition-fields > label:has(textarea) {
+  grid-column: 1 / -1;
+}
+.policy-editor .graph-condition-fields .text-button {
+  justify-self: start;
+}
+.graph-inspector small {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.graph-inspector .text-button {
+  justify-self: start;
+}
+.graph-node-panel {
+  min-width: 0;
+}
+.graph-preset-actions {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.graph-preset-actions .text-button {
+  justify-self: start;
+}
+.graph-condition {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.graph-condition-child {
+  border-left: 2px solid var(--divider);
+  padding-left: 12px;
+  display: grid;
+  gap: 8px;
+}
+.graph-condition-child > .text-button {
+  font-size: 12px;
+}
+.node-library-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 680px);
+  gap: 28px;
+  align-items: start;
+}
+.node-library-layout nav {
+  display: grid;
+  gap: 2px;
+}
+.node-library-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+.node-library-item small {
+  color: var(--muted);
+}
+.node-library-item.is-selected {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.node-library-detail {
+  min-width: 0;
+}
+.node-library-detail .graph-inspector {
+  max-height: none;
+  padding-bottom: 20px;
+}
+.graph-toolbar select {
+  max-width: 100%;
+}
+.graph-editor .graph-actions > select {
+  width: auto;
+  max-width: 100%;
+}
+.graph-condition-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.graph-condition-fields > label:first-child,
+.graph-condition-fields > button {
+  grid-column: 1 / -1;
+}
+.graph-condition-fields > label:nth-child(2) {
+  grid-column: 1 / -1;
+}
+.graph-condition-fold > summary {
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 0;
+}
+.graph-condition-fold[open] > summary {
+  margin-bottom: 8px;
+}
+.node-library-detail .graph-condition-fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.code-input {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.graph-plan,
+.graph-trial {
+  margin-top: 24px;
+}
+.graph-plan > summary,
+.graph-trial > summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-weight: 600;
+}
+.graph-plan-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.graph-plan-steps span {
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.graph-trial {
+  max-width: 720px;
+}
+.graph-trial label {
+  margin: 12px 0;
+}
+.graph-trace {
+  max-width: 800px;
+  margin-top: 20px;
+}
+.graph-trace ol {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.graph-trace li {
+  background: var(--surface);
+  padding: 10px 14px;
+  border-radius: 4px;
+}
+.graph-trace summary {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+.graph-trace pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.6;
+}
+@media (max-width: 1000px) {
+  .graph-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .graph-viewport {
+    height: 460px;
+  }
+  .graph-inspector {
+    max-height: none;
+    padding: 8px 0;
+  }
+}
+@media (max-width: 640px) {
+  .node-library-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .node-library-layout nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.policy-editor {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+.policy-editor > h3 {
+  margin: 12px 0 0;
+}
+.policy-editor > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.policy-editor > button {
+  justify-self: start;
+}
+.policy-snapshot {
+  min-width: 0;
+  margin: 8px 0;
+}
+.policy-snapshot pre {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.policy-composer {
+  min-width: 0;
+}
+.policy-expression > label {
+  display: grid;
+  gap: 6px;
+}
+.policy-expression .graph-actions > select {
+  max-width: 100%;
+}
+.node-library-detail > label {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.action-chain {
+  padding-inline-start: 1.5rem;
+  margin-block: 0.5rem;
+}
+.action-chain > li {
+  padding-block: 0.75rem;
+}
+.action-chain > li + li {
+  border-top: 1px solid var(--divider);
+}
+
+.graph-inspector .action-chain .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.match-cases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+.match-cases fieldset {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: .75rem;
+}
+.match-cases legend {
+  margin-bottom: .5rem;
+}
+
+.graph-actions > .template-picker {
+  margin: 0;
+}
